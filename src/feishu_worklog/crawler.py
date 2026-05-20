@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -617,22 +618,34 @@ async def _scroll_to_load_date(
         await asyncio.sleep(wait_ms / 1000)
 
 
-def _parse_ts(s: str, target_date: str) -> int | None:
-    """飞书时间格式都是 'HH:MM'；其它格式宽松匹配。"""
+_TS_RE = re.compile(r"(\d{1,2}):(\d{2})$")
+
+
+def _parse_ts(s: str, msg_date: str) -> int | None:
+    """从 .message-timestamp 抽 HH:MM，配 msg_date 算 unix ts。
+
+    实测见过的 time_text 格式都以 HH:MM 结尾：
+      'HH:MM'                  # 当天/最近
+      'M月D日 HH:MM'            # 跨日（同年）
+      'YYYY年M月D日 HH:MM'      # 跨年
+      '4月22日 15:53'           # 转发的旧消息
+
+    日期一律用 msg_date（divider 推断出来的更可信），time_text 里的日期前缀
+    可能是消息内嵌的旧时间戳（比如禅道 bug 通知），不用。
+    """
     if not s:
         return None
-    s = s.strip()
-    fmts = ["%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M"]
-    for f in fmts:
-        try:
-            dt = datetime.strptime(s, f)
-            if f == "%H:%M":
-                y, m, d = map(int, target_date.split("-"))
-                dt = dt.replace(year=y, month=m, day=d)
-            return int(dt.timestamp())
-        except ValueError:
-            continue
-    return None
+    m = _TS_RE.search(s.strip())
+    if not m:
+        return None
+    h, mi = int(m.group(1)), int(m.group(2))
+    if not (0 <= h <= 23 and 0 <= mi <= 59):
+        return None
+    try:
+        y, mo, d = map(int, msg_date.split("-"))
+        return int(datetime(y, mo, d, h, mi).timestamp())
+    except (ValueError, OSError):
+        return None
 
 
 async def _snapshot(page: Page, cfg: Config, tag: str) -> None:
