@@ -1,0 +1,85 @@
+# feishu-worklog
+
+每天定时抓取飞书里你参与并发言的私聊/群聊，用 Claude 按"工作主题"重组成工作日志，写入 Obsidian。
+
+LLM 通过 `claude` CLI 子进程调用，**复用 Claude Code 的 OAuth 登录态，无需单独申请 Anthropic API key**。
+
+## 工作流
+
+```
+cron 22:00
+  └─ Playwright (持久化登录态)
+       └─ 遍历最近会话 → 抓今日消息 → 标记"我发的" + 上下文
+            └─ SQLite 落原始数据（可重跑）
+                 └─ `claude -p` (默认 Haiku 4.5, ~$1/月)
+                      └─ 写 mybrain/工作日记/YYYY-MM-DD.md
+                           └─ Google Drive 自动同步
+```
+
+主题字典 (`data/topics.json`) 由 LLM 每天增量沉淀，第一周可能抖，越久越稳。
+
+## 安装
+
+```bash
+cd /Users/xiaolong/go/src/feishu-worklog
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+playwright install chromium
+
+cp config.example.yaml config.yaml
+# 编辑 config.yaml，至少填 my_name
+```
+
+> ⚠️ 依赖系统里已安装 `claude` (Claude Code CLI) 并已登录。
+> 在终端跑一次 `claude --version` 能看到版本号即 OK。
+
+## 首次登录
+
+```bash
+python -m scripts.login
+```
+
+会打开一个有头浏览器，扫码登录飞书。登录态保存在 `data/browser_state/`，后续无须再登。
+
+## 每日运行
+
+```bash
+python -m scripts.run_daily              # 跑今天
+python -m scripts.run_daily 2026-05-18   # 跑指定日期
+```
+
+## 长期记忆 / 归档
+
+工作日记保留 `retention_days` 天（默认 14）；超期的会自动：
+- 浓缩成每主题一条时间线条目，追加到 `工作日记/长期记忆/{主题名}.md`
+- 原日记移到 `工作日记/归档/YYYY-MM-DD.md` 留底
+
+归档由 `run_daily` 顺手执行（每次最多 1 天，多天积压会渐进处理）。
+也可一次性补：
+
+```bash
+python -m scripts.archive_backfill --dry    # 先看会处理哪些
+python -m scripts.archive_backfill          # 实际跑
+python -m scripts.archive_backfill 5        # 最多跑 5 天
+```
+
+## 部署成自动任务（macOS / launchd）
+
+电脑关盖 cron 跑不了，用 launchd LaunchAgent：每天 8:00 触发，错过会在系统唤醒后补跑，
+登录时也跑一次。脚本带 `--catch-up`，自动找最近 3 天里缺的最近一天补上。
+
+```bash
+./scripts/install_launchd.sh install     # 装好并启动
+./scripts/install_launchd.sh status      # 看状态
+./scripts/install_launchd.sh logs        # tail 运行日志
+./scripts/install_launchd.sh reload      # 改完 plist 后重新加载
+./scripts/install_launchd.sh uninstall   # 卸载
+```
+
+注意：macOS 可能弹一次"允许 LaunchAgent 运行后台任务"的窗，同意即可。
+
+## 排错
+
+- 抓不到消息：去 `data/screenshots/` 看抓取过程的截图
+- DOM 变了：`src/feishu_worklog/crawler.py` 里的 selector 列表写了 fallback，加一个新候选即可
+- LLM 输出格式坏：`data/raw/YYYY-MM-DD.json` 留有 prompt 输入，可重跑 `python -m scripts.run_daily --skip-crawl`

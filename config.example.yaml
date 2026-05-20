@@ -1,0 +1,43 @@
+# 复制为 config.yaml 后填入你自己的值：
+#   cp config.example.yaml config.yaml
+
+# 你在飞书里的显示名（用于识别"我发的消息"）
+my_name: "小龙"
+
+# Obsidian 工作日记目录
+obsidian_path: "/Users/xiaolong/Library/CloudStorage/GoogleDrive-yu452562082@gmail.com/我的云端硬盘/mybrain/工作日记"
+
+# 本地数据目录（SQLite / 主题字典 / 浏览器登录态 / 截图）
+data_dir: "./data"
+
+# === LLM 配置 ===
+# 通过 `claude` CLI 子进程调用，复用 Claude Code 的 OAuth 登录态，无需单独 API key。
+#
+# model 可填：
+#   - "claude-haiku-4-5"   （默认；便宜，~$1/月，质量已够用）
+#   - "claude-sonnet-4-6"  （更聪明，~$3-5/月）
+#   - "claude-opus-4-7"    （最强但贵）
+model: "claude-haiku-4-5"
+
+# 单次调用的成本上限（美元）；超过 claude CLI 会拒绝继续，防意外
+max_budget_usd: 1.0
+
+# 单次 claude CLI 调用的超时（秒）。归档场景输入更长，可适当调大
+llm_timeout_seconds: 240
+
+# === 飞书抓取参数 ===
+feishu_url: "https://www.feishu.cn/messenger/"
+max_chats: 30                     # 最多遍历多少个最近会话
+context_messages_before: 3        # 我发的消息前面拉几条上下文
+context_messages_after: 1         # 后面拉几条
+scroll_pause_ms: 600              # 每次滚动后等待时间
+
+# === Playwright ===
+headless: false                   # 首次登录建议 false；稳定后可 true
+slow_mo_ms: 0                     # 调试时可以加 200~500
+
+# === 归档 / 长期记忆 ===
+# 超过 retention_days 天的日记：
+#   - 原文件移到 工作日记/归档/
+#   - 内容按主题浓缩追加到 工作日记/长期记忆/{主题名}.md
+retention_days: 14

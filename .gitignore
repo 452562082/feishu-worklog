@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# 本地数据 / 登录态
+data/messages.db
+data/topics.json
+data/browser_state/
+data/screenshots/
+data/raw/
+data/*.log
+
+# 配置（含密钥）
+config.yaml
+.env

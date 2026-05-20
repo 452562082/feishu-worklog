@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.xiaolong.feishu-worklog</string>
+
+    <!-- 每天 8:00 触发；如果电脑当时在睡，唤醒后 launchd 会自动补跑 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- 用户登录后 / agent 加载时也跑一次（追加上 catch-up，已生成的日子会快速退出） -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/xiaolong/go/src/feishu-worklog/.venv/bin/python</string>
+        <string>-m</string>
+        <string>scripts.run_daily</string>
+        <string>--catch-up</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/xiaolong/go/src/feishu-worklog</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/xiaolong/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- 用户登录态相关：让 claude CLI 能读 keychain -->
+        <key>HOME</key>
+        <string>/Users/xiaolong</string>
+    </dict>
+
+    <!-- 日志（运行输出/错误） -->
+    <key>StandardOutPath</key>
+    <string>/Users/xiaolong/go/src/feishu-worklog/data/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/xiaolong/go/src/feishu-worklog/data/launchd.err.log</string>
+
+    <!-- 防止僵尸：超过 10 分钟没结束就 kill -->
+    <key>ExitTimeOut</key>
+    <integer>600</integer>
+
+    <!-- 同一个任务实例只允许 1 个并发 -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>
