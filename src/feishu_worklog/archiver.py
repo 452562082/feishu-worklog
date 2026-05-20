@@ -97,8 +97,10 @@ def _append_to_long_term(
 ) -> Path:
     """把 items 追加到 长期记忆/{topic}.md 的时间线，最新在上。"""
     long_term_dir.mkdir(parents=True, exist_ok=True)
-    # 主题名做文件名安全处理（去掉 / \ : 等）
+    # 主题名做文件名安全处理：过滤特殊字符 + 限长（macOS/Linux 文件名 ≤ 255 字节）
     safe_name = re.sub(r'[/\\:<>"|?*]', "_", topic).strip() or "未命名"
+    # UTF-8 一个中文 3 字节，80 字符 ≈ 240 字节，留点余量给 .md 后缀
+    safe_name = safe_name[:80]
     fp = long_term_dir / f"{safe_name}.md"
 
     new_block = "\n".join(f"- {date_iso} {it}" for it in items)
@@ -173,6 +175,7 @@ def archive_one_day(cfg: Config, md_path: Path) -> dict:
     )
 
     by_topic = _parse_archive_output(text)
+    by_topic = _reconcile_topic_names(by_topic, topics)
     stats: dict[str, int] = {}
     for topic, items in by_topic.items():
         if not items:
@@ -183,6 +186,38 @@ def archive_one_day(cfg: Config, md_path: Path) -> dict:
 
     _move_to_archive(cfg, md_path)
     return stats
+
+
+def _normalize_topic(s: str) -> str:
+    """主题名规范化用于匹配：去空白 + lower。"""
+    return re.sub(r"\s+", "", s).lower()
+
+
+def _reconcile_topic_names(
+    by_topic: dict[str, list[str]], expected: list[str]
+) -> dict[str, list[str]]:
+    """LLM 偶尔会把主题名拼错或改写（多/少空格、换字符），
+    导致归档时新建一个跟"## 时间线"已有的不同文件。
+    这里做精确 + 规范化匹配把它们对齐到 expected 里的 canonical name。
+    完全找不到对应的 → warn + 丢弃，不写新文件。
+    """
+    expected_set = set(expected)
+    norm_to_canonical = {_normalize_topic(t): t for t in expected}
+    out: dict[str, list[str]] = {}
+    for name, items in by_topic.items():
+        if name in expected_set:
+            canonical = name
+        else:
+            canonical = norm_to_canonical.get(_normalize_topic(name))
+            if canonical is None:
+                log.warning(
+                    "[archive] LLM 输出未知主题 %r（不在工作日记的 ### 列表里），跳过",
+                    name,
+                )
+                continue
+            log.info("[archive] 主题名规范化：%r → %r", name, canonical)
+        out.setdefault(canonical, []).extend(items)
+    return out
 
 
 def _move_to_archive(cfg: Config, md_path: Path) -> None:

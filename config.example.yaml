@@ -41,3 +41,9 @@ slow_mo_ms: 0                     # 调试时可以加 200~500
 #   - 原文件移到 工作日记/归档/
 #   - 内容按主题浓缩追加到 工作日记/长期记忆/{主题名}.md
 retention_days: 14
+
+# === 敏感数据保留期 ===
+# 这些目录里的文件含飞书原文 / 私聊上下文 / 截图，本地未加密，按周期自动清理
+raw_retention_days: 30           # data/raw/ LLM 输入输出留底
+screenshot_retention_days: 14    # data/screenshots/ 异常诊断截图
+db_retention_days: 60            # messages.db 里的原始消息（超期自动 DELETE + VACUUM）

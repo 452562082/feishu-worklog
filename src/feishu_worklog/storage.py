@@ -105,3 +105,20 @@ class Storage:
                    WHERE date=?""",
                 (int(time.time()), msg_count, "ok" if ok else "failed", date),
             )
+
+    def cleanup_old_messages(self, cutoff_date: str) -> int:
+        """删 cutoff_date 之前的消息（含敏感数据，按 db_retention_days 清理）。
+        cutoff_date 形如 'YYYY-MM-DD'；同时清理 daily_runs。返回删除条数。"""
+        with self.conn() as c:
+            before = c.total_changes
+            c.execute("DELETE FROM messages WHERE date < ?", (cutoff_date,))
+            c.execute("DELETE FROM daily_runs WHERE date < ?", (cutoff_date,))
+            deleted = c.total_changes - before
+        if deleted > 0:
+            # VACUUM 不能在事务里跑，单开连接
+            v = sqlite3.connect(self.db_path)
+            try:
+                v.execute("VACUUM")
+            finally:
+                v.close()
+        return deleted

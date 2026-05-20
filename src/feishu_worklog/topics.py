@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
+from datetime import datetime, timedelta
 from pathlib import Path
+
+# 超过这个天数没 used 的主题标 archived，不再注入 LLM prompt
+_ARCHIVE_AFTER_DAYS = 90
 
 
 @dataclass
@@ -13,6 +17,7 @@ class Topic:
     first_seen: str = ""
     last_used: str = ""
     count: int = 0
+    archived: bool = False
 
 
 class TopicDict:
@@ -27,7 +32,12 @@ class TopicDict:
         if not self.path.exists():
             return
         data = json.loads(self.path.read_text(encoding="utf-8"))
-        self.topics = [Topic(**t) for t in data.get("topics", [])]
+        # 容忍老 JSON 没有新字段（如 archived），也忽略未知字段
+        valid_keys = {f.name for f in fields(Topic)}
+        self.topics = [
+            Topic(**{k: v for k, v in t.items() if k in valid_keys})
+            for t in data.get("topics", [])
+        ]
 
     def save(self) -> None:
         self.path.write_text(
@@ -40,10 +50,11 @@ class TopicDict:
         )
 
     def as_prompt_block(self) -> str:
-        if not self.topics:
+        active = [t for t in self.topics if not t.archived]
+        if not active:
             return "（暂无积累的主题，请你自行归纳并新建）"
         lines = []
-        for t in self.topics:
+        for t in active:
             aliases = f"（别名：{', '.join(t.aliases)}）" if t.aliases else ""
             lines.append(f"- **{t.name}**{aliases}：{t.description}")
         return "\n".join(lines)
@@ -86,7 +97,8 @@ class TopicDict:
             by_name[name] = t
             just_added.add(name)
 
-        for name in update.get("used", []):
+        # 保序去重 used（LLM 偶尔会重复列同一主题导致 count +2）
+        for name in dict.fromkeys(update.get("used", [])):
             t = by_name.get(name)
             if t is None:
                 # 保底：Claude 应该把新主题写进 added，但偶尔会漏；自动建条目
@@ -101,10 +113,30 @@ class TopicDict:
                 by_name[name] = t
                 continue
             t.last_used = today
+            t.archived = False  # 复活：archived 主题如果今天又出现，恢复活跃
             if name not in just_added:
                 # 刚通过 added 建出来的已经 count=1，避免首日重复计数
                 t.count += 1
             if not t.first_seen:
                 t.first_seen = today
+
+        # 把超过 _ARCHIVE_AFTER_DAYS 没 used 的标 archived，
+        # 避免主题字典越长越大塞爆 prompt
+        try:
+            today_d = datetime.strptime(today, "%Y-%m-%d").date()
+            cutoff = (today_d - timedelta(days=_ARCHIVE_AFTER_DAYS)).isoformat()
+            newly_archived = 0
+            for t in by_name.values():
+                if not t.archived and t.last_used and t.last_used < cutoff:
+                    t.archived = True
+                    newly_archived += 1
+            if newly_archived > 0:
+                import logging
+                logging.getLogger(__name__).info(
+                    "[topics] %d 个 > %d 天未用的主题已 archived",
+                    newly_archived, _ARCHIVE_AFTER_DAYS,
+                )
+        except ValueError:
+            pass
 
         self.topics = list(by_name.values())

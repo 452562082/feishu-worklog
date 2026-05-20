@@ -23,6 +23,9 @@ class Config:
     slow_mo_ms: int
     retention_days: int
     llm_timeout_seconds: int
+    raw_retention_days: int
+    screenshot_retention_days: int
+    db_retention_days: int
 
     @property
     def db_path(self) -> Path:
@@ -85,6 +88,9 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         slow_mo_ms=int(raw.get("slow_mo_ms", 0)),
         retention_days=int(raw.get("retention_days", 14)),
         llm_timeout_seconds=int(raw.get("llm_timeout_seconds", 240)),
+        raw_retention_days=int(raw.get("raw_retention_days", 30)),
+        screenshot_retention_days=int(raw.get("screenshot_retention_days", 14)),
+        db_retention_days=int(raw.get("db_retention_days", 60)),
     )
 
     for d in (cfg.data_dir, cfg.browser_state_dir, cfg.screenshots_dir, cfg.raw_dir):

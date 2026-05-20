@@ -146,8 +146,18 @@ async def _ensure_logged_in(page: Page, cfg: Config) -> None:
 
 
 # 从一个会话条提取名字 + 稳定 id 的核心逻辑（list/click 两处共用）。
+# 返回两个 key：
+#   - key：avatar+name 哈希，用于点击时精确匹配（同名 chat 也能区分）
+#   - name_key：仅 name 哈希，用于 DB chat_id（avatar 变了 chat_id 不变）
 # 名字过滤：跳过纯数字（未读 badge）、HH:MM 时间戳、群标签（"机器人"/"外部"等）
 _SESSION_INFO_FN_JS = r"""
+function _djbHash(s) {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) {
+        h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    }
+    return String(h);
+}
 function extractSessionInfo(el) {
     const SKIP_TAGS = new Set(["机器人","外部","普通群","超级群","外部群","内部","已置顶"]);
     const main = el.querySelector('.a11y_feed_card_main') || el;
@@ -165,12 +175,11 @@ function extractSessionInfo(el) {
     if (!name) return null;
     const img = el.querySelector('img');
     const avatar = img ? (img.getAttribute('src') || '') : '';
-    let h = 0;
-    const seed = avatar + '||' + name;
-    for (let i = 0; i < seed.length; i++) {
-        h = ((h << 5) - h + seed.charCodeAt(i)) | 0;
-    }
-    return {name, key: String(h)};
+    return {
+        name,
+        key: _djbHash(avatar + '||' + name),
+        name_key: _djbHash(name),
+    };
 }
 """
 
@@ -231,7 +240,11 @@ async def _list_recent_chats(page: Page, cfg: Config) -> list[dict[str, Any]]:
         before = len(seen)
         for it in items:
             if it["key"] not in seen and it["name"]:
-                seen[it["key"]] = {"name": it["name"], "key": it["key"]}
+                seen[it["key"]] = {
+                    "name": it["name"],
+                    "key": it["key"],
+                    "name_key": it["name_key"],
+                }
         log.debug("batch %d: dom=%d, seen=%d", batch, len(items), len(seen))
         if len(seen) >= cfg.max_chats:
             break
@@ -249,8 +262,9 @@ async def _list_recent_chats(page: Page, cfg: Config) -> list[dict[str, Any]]:
         await asyncio.sleep(cfg.scroll_pause_ms / 1000)
 
     log.info("收集到 %d 个唯一会话", len(seen))
-    return [{"name": v["name"], "chat_id": "h:" + k, "key": v["key"]}
-            for k, v in seen.items()]
+    # chat_id 用 name_key（不含 avatar），改头像后 chat_id 不变，DB 里历史消息能跟上新消息合并
+    return [{"name": v["name"], "chat_id": "n:" + v["name_key"], "key": v["key"]}
+            for v in seen.values()]
 
 
 async def _scrape_one_chat(

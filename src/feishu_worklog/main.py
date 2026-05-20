@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -107,6 +108,45 @@ def run(
         archive_due(cfg, limit=1)
     except Exception as e:
         log.warning("归档过程出错（不影响今日产出）: %s", e)
+
+    # 清理过期敏感数据（raw prompt/response、截图、原始消息）
+    try:
+        _cleanup_retention(cfg, storage)
+    except Exception as e:
+        log.warning("retention 清理出错（不影响今日产出）: %s", e)
+
+
+def _cleanup_retention(cfg: Config, storage: Storage) -> None:
+    """按 cfg 配置清理过期文件 + DB。"""
+    log = logging.getLogger("main")
+
+    def sweep_dir(d: Path, days: int, label: str) -> None:
+        if not d.exists() or days <= 0:
+            return
+        cutoff = time.time() - days * 86400
+        n = 0
+        for fp in d.iterdir():
+            if not fp.is_file():
+                continue
+            try:
+                if fp.stat().st_mtime < cutoff:
+                    fp.unlink()
+                    n += 1
+            except OSError as e:
+                log.debug("删除 %s 失败：%s", fp, e)
+        if n > 0:
+            log.info("[retention] %s 删除 %d 个 > %d 天的文件", label, n, days)
+
+    sweep_dir(cfg.raw_dir, cfg.raw_retention_days, "raw/")
+    sweep_dir(cfg.screenshots_dir, cfg.screenshot_retention_days, "screenshots/")
+
+    if cfg.db_retention_days > 0:
+        cutoff_date = (datetime.now().date()
+                       - timedelta(days=cfg.db_retention_days)).isoformat()
+        deleted = storage.cleanup_old_messages(cutoff_date)
+        if deleted > 0:
+            log.info("[retention] messages.db 删除 %d 条 < %s 的消息",
+                     deleted, cutoff_date)
 
 
 def login() -> None:
