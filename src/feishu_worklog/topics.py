@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from ._atomic import write_text_atomic
+
 # 超过这个天数没 used 的主题标 archived，不再注入 LLM prompt
 _ARCHIVE_AFTER_DAYS = 90
 
@@ -40,13 +42,13 @@ class TopicDict:
         ]
 
     def save(self) -> None:
-        self.path.write_text(
+        write_text_atomic(
+            self.path,
             json.dumps(
                 {"topics": [asdict(t) for t in self.topics]},
                 ensure_ascii=False,
                 indent=2,
             ),
-            encoding="utf-8",
         )
 
     def as_prompt_block(self) -> str:
@@ -81,7 +83,6 @@ class TopicDict:
                 t.name = new
                 by_name[new] = t
 
-        just_added: set[str] = set()
         for n in update.get("added", []):
             name = n.get("name")
             if not name or name in by_name:
@@ -95,7 +96,6 @@ class TopicDict:
                 count=1,
             )
             by_name[name] = t
-            just_added.add(name)
 
         # 保序去重 used（LLM 偶尔会重复列同一主题导致 count +2）
         for name in dict.fromkeys(update.get("used", [])):
@@ -112,11 +112,14 @@ class TopicDict:
                 )
                 by_name[name] = t
                 continue
+            # 同一天已经计过（重跑 --skip-crawl / 手动多次触发）→ 不再 +1
+            # last_used == today 既覆盖刚 added 的（count=1），也覆盖前面跑过的
+            if t.last_used == today:
+                t.archived = False
+                continue
             t.last_used = today
             t.archived = False  # 复活：archived 主题如果今天又出现，恢复活跃
-            if name not in just_added:
-                # 刚通过 added 建出来的已经 count=1，避免首日重复计数
-                t.count += 1
+            t.count += 1
             if not t.first_seen:
                 t.first_seen = today
 

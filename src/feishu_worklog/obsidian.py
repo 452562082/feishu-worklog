@@ -4,6 +4,8 @@ import logging
 import shutil
 from pathlib import Path
 
+from ._atomic import write_text_atomic
+
 log = logging.getLogger(__name__)
 
 
@@ -15,6 +17,6 @@ def write_daily(obsidian_path: Path, date: str, markdown: str) -> Path:
         bak = target.with_suffix(".md.bak")
         shutil.copy2(target, bak)
         log.info("已有 %s，备份为 %s", target.name, bak.name)
-    target.write_text(markdown.rstrip() + "\n", encoding="utf-8")
+    write_text_atomic(target, markdown.rstrip() + "\n")
     log.info("已写入 %s", target)
     return target

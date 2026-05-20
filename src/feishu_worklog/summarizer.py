@@ -193,8 +193,12 @@ def summarize(
     target_date: str,
     messages: list[dict],
     topics: TopicDict,
+    raw_prefix: str = "",
 ) -> tuple[str, dict]:
-    """返回 (markdown, topics_update_dict)。"""
+    """返回 (markdown, topics_update_dict)。
+
+    raw_prefix：raw 留底文件名前缀，smoke 测试传 "smoke-" 避免覆盖真跑数据。
+    """
     by_chat: dict[str, list[dict]] = {}
     for m in messages:
         by_chat.setdefault(m["chat_name"], []).append(m)
@@ -208,7 +212,7 @@ def summarize(
     )
 
     # 留底 prompt 输入（出错可重跑）
-    (cfg.raw_dir / f"{target_date}-prompt.txt").write_text(user_prompt, encoding="utf-8")
+    (cfg.raw_dir / f"{raw_prefix}{target_date}-prompt.txt").write_text(user_prompt, encoding="utf-8")
 
     envelope = _call_claude(
         prompt=user_prompt,
@@ -218,7 +222,7 @@ def summarize(
         timeout=cfg.llm_timeout_seconds,
     )
     text = (envelope.get("result") or "").strip()
-    (cfg.raw_dir / f"{target_date}-response.txt").write_text(text, encoding="utf-8")
+    (cfg.raw_dir / f"{raw_prefix}{target_date}-response.txt").write_text(text, encoding="utf-8")
 
     usage = envelope.get("usage", {})
     log.info(

@@ -90,7 +90,7 @@ def main() -> None:
     print(f"[smoke] 现有主题 {len(topics.topics)} 个")
 
     print("[smoke] 调用 Claude…")
-    markdown, update = summarize(cfg, target, msgs, topics)
+    markdown, update = summarize(cfg, target, msgs, topics, raw_prefix="smoke-")
 
     print()
     print("=" * 60)

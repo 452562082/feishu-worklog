@@ -19,6 +19,7 @@ import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from ._atomic import write_text_atomic
 from .config import Config
 from .summarizer import _call_claude  # 复用 claude CLI 调用
 
@@ -94,8 +95,12 @@ def _parse_archive_output(text: str) -> dict[str, list[str]]:
 
 def _append_to_long_term(
     long_term_dir: Path, topic: str, date_iso: str, items: list[str]
-) -> Path:
-    """把 items 追加到 长期记忆/{topic}.md 的时间线，最新在上。"""
+) -> Path | None:
+    """把 items 追加到 长期记忆/{topic}.md 的时间线，最新在上。
+
+    幂等：如果文件里已经存在以 `- {date_iso} ` 开头的行，认为这天已经归档过了，
+    直接 return None，避免双归档（步骤 2 成功步骤 3 失败时下次跑会再触发）。
+    """
     long_term_dir.mkdir(parents=True, exist_ok=True)
     # 主题名做文件名安全处理：过滤特殊字符 + 限长（macOS/Linux 文件名 ≤ 255 字节）
     safe_name = re.sub(r'[/\\:<>"|?*]', "_", topic).strip() or "未命名"
@@ -103,21 +108,27 @@ def _append_to_long_term(
     safe_name = safe_name[:80]
     fp = long_term_dir / f"{safe_name}.md"
 
+    existing = fp.read_text(encoding="utf-8") if fp.exists() else ""
+
+    # 幂等检查：这一天的条目是不是已经在了
+    date_marker = f"- {date_iso} "
+    if date_marker in existing:
+        log.info("[archive]   ↳ %s 已有 %s 的条目，跳过重复归档", topic, date_iso)
+        return None
+
     new_block = "\n".join(f"- {date_iso} {it}" for it in items)
 
-    if not fp.exists():
+    if not existing:
         content = f"# {topic}\n\n## 时间线\n\n{new_block}\n"
+    elif "## 时间线" in existing:
+        # 在 ## 时间线 之后立即插入（保持最新在上）
+        head, sep, body = existing.partition("## 时间线")
+        body = body.lstrip("\n")
+        content = f"{head}{sep}\n\n{new_block}\n\n{body}".rstrip() + "\n"
     else:
-        existing = fp.read_text(encoding="utf-8")
-        if "## 时间线" in existing:
-            # 在 ## 时间线 之后立即插入（保持最新在上）
-            head, sep, body = existing.partition("## 时间线")
-            body = body.lstrip("\n")
-            content = f"{head}{sep}\n\n{new_block}\n\n{body}".rstrip() + "\n"
-        else:
-            content = existing.rstrip() + f"\n\n## 时间线\n\n{new_block}\n"
+        content = existing.rstrip() + f"\n\n## 时间线\n\n{new_block}\n"
 
-    fp.write_text(content, encoding="utf-8")
+    write_text_atomic(fp, content)
     return fp
 
 
@@ -181,6 +192,8 @@ def archive_one_day(cfg: Config, md_path: Path) -> dict:
         if not items:
             continue
         fp = _append_to_long_term(cfg.long_term_dir, topic, date_iso, items)
+        if fp is None:
+            continue  # 幂等：这天已归档过，跳过
         stats[topic] = len(items)
         log.info("[archive]   ↳ %s += %d 条 → %s", topic, len(items), fp.name)
 
