@@ -281,7 +281,7 @@ async def _scrape_one_chat(
     # 关键：当首个 divider 不在 DOM（虚拟列表回收）时，推断"首 divider 之前的消息"
     # 是"首 divider 日期 - 1 天"，这样 catch-up 翻历史时不会丢消息。
     raw_list: list[dict] = await page.evaluate(
-        r"""([today_iso]) => {
+        r"""([today_iso, target_date]) => {
             const today = new Date(today_iso + 'T12:00:00');
             const ymd = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
             const daysAgo = n => {
@@ -315,14 +315,20 @@ async def _scrape_one_chat(
                     if (d) { firstDivIdx = i; firstDivDate = d; break; }
                 }
             }
-            // pre-first 默认：今天前一天（启发式；适合 catch-up yesterday 的常见场景）
-            let preFirstDate = daysAgo(1);
+            // pre-first 默认：
+            //   - 有 firstDivider：firstDivider 前一天
+            //   - 没有：取 target_date（活跃聊天 DOM 未跨天时这是常态）
+            let preFirstDate;
             if (firstDivDate) {
                 const fd = new Date(firstDivDate + 'T12:00:00');
                 fd.setDate(fd.getDate() - 1);
                 preFirstDate = ymd(fd);
+            } else {
+                preFirstDate = target_date;
             }
 
+            // 同时收集所有 divider 文本用于诊断
+            const dividerTexts = [];
             let currentDate = preFirstDate;
             const out = [];
             for (let i = 0; i < all.length; i++) {
@@ -330,6 +336,7 @@ async def _scrape_one_chat(
                 const cls = el.className || '';
                 if (cls.includes('date-divider') && !cls.includes('js-message-item')) {
                     const txt = (el.textContent || '').trim();
+                    dividerTexts.push(txt);
                     const d = parseDividerDate(txt);
                     if (d) currentDate = d;
                     continue;
@@ -348,10 +355,12 @@ async def _scrape_one_chat(
                     msg_date: currentDate,
                 });
             }
-            return out;
+            return {messages: out, dividers: dividerTexts, preFirstDate};
         }""",
-        [today_iso],
+        [today_iso, target_date],
     )
+    diag = raw_list
+    raw_list = diag["messages"]
 
     # 判定本会话整体 chat_type（看第一条非空消息的 class hint）
     chat_type = "p2p"
@@ -411,12 +420,22 @@ async def _scrape_one_chat(
             date=msg_date,
         ))
     if len(raw_list) > 0 and len(out) == 0:
-        # 抓到了消息但全被过滤，提到 INFO 方便排查
+        # 全被过滤：常见原因是这个 chat 今天没活动（DOM 里只剩昨天/历史段）
         log.info(
-            "  └ %s: 视口里 %d 条 message-item, 全部丢弃 (no_text=%d no_ts=%d not_today=%d)",
+            "  └ %s: 视口里 %d 条 message-item, 全部丢弃 "
+            "(no_text=%d no_ts=%d not_today=%d)",
             chat["name"], len(raw_list), skipped_no_text, skipped_no_ts,
             skipped_wrong_date,
         )
+        # 详细诊断（dividers/sample）放 DEBUG，需要排查时再开
+        if log.isEnabledFor(logging.DEBUG):
+            sample = next((r for r in raw_list if (r.get("text") or "").strip()), {})
+            log.debug(
+                "    dividers=%r preFirst=%s sample={time=%r msg_date=%s text=%r}",
+                diag.get("dividers"), diag.get("preFirstDate"),
+                sample.get("time_text"), sample.get("msg_date"),
+                (sample.get("text") or "")[:60],
+            )
     return out
 
 
@@ -455,10 +474,13 @@ async def _scroll_to_load_date(
     实测有效做法是：找到 .js-message-item 沿父链向上第一个 scrollHeight > clientHeight
     的祖先元素，直接 .scrollTop = 0 翻到顶。每次设 0 后 simplebar 会触发懒加载，
     新消息插进 DOM 顶部后 scrollTop 自动变成 ~ 加载内容的高度，再设 0 继续翻。
+
+    target=今天时：飞书默认就停在底部，今天的消息已在 DOM 里。
+    继续滚顶部会让虚拟列表把今天的消息 evict 掉，反而抓不到 —— 所以只滚到底就退。
     """
     target_d = datetime.strptime(target_date, "%Y-%m-%d").date()
     is_catchup = target_d < datetime.now().date()
-    max_attempts = 80 if is_catchup else 25
+    max_attempts = 80  # catchup 才用得到
 
     # 注入一个"找滚动容器"的函数到 window，后续重复用
     await page.evaluate(
@@ -474,7 +496,26 @@ async def _scroll_to_load_date(
         }"""
     )
 
-    # 1) 先到底（让虚拟列表把当前位置 anchor 到最新消息）
+    # 1) 滚到底 —— 关键点：
+    # 飞书点开 chat 时若有未读，会把锚点定在"first unread"，单纯 scrollTop = scrollHeight
+    # 会被 simplebar 立刻 reset 回 unread 锚点。改用鼠标滚轮多次往下滚，
+    # 模拟用户行为，simplebar 会按预期触发懒加载到最新消息。
+    async def _wheel_to_bottom(rounds: int = 12) -> None:
+        try:
+            box = await page.locator(SEL_MESSAGE_ITEM).last.bounding_box()
+        except Exception:
+            box = None
+        if not box:
+            return
+        cx = box["x"] + box["width"] / 2
+        cy = box["y"] + box["height"] / 2
+        await page.mouse.move(cx, cy)
+        for _ in range(rounds):
+            await page.mouse.wheel(0, 3000)
+            await asyncio.sleep(0.12)
+
+    await _wheel_to_bottom()
+    # 保险再设一次 scrollTop=scrollHeight，确保锚到底
     await page.evaluate(
         r"""(sel) => {
             const items = document.querySelectorAll(sel);
@@ -485,6 +526,10 @@ async def _scroll_to_load_date(
         SEL_MESSAGE_ITEM,
     )
     await asyncio.sleep(cfg.scroll_pause_ms / 1000)
+
+    # target=今天：底部就是今天，不要再滚顶，否则虚拟列表会把今天的消息丢掉
+    if not is_catchup:
+        return
 
     # 2) 反复滚到顶，直到任一 divider 的日期 < target_date 或者无新内容
     last_count = -1

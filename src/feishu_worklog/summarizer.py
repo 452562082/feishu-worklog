@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -102,14 +103,30 @@ def _weekday_cn(date_str: str) -> str:
     return "周" + "一二三四五六日"[wd]
 
 
+_RETRYABLE_HINTS = (
+    "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EAI_AGAIN",
+    "socket hang up", "Unable to connect", "fetch failed",
+    "503", "502", "504", "overloaded", "rate_limit",
+)
+
+
+def _is_retryable_envelope(envelope: dict) -> bool:
+    """根据 envelope 判断是不是值得重试的临时故障。"""
+    if not envelope.get("is_error"):
+        return False
+    msg = (envelope.get("result") or "") + " " + str(envelope.get("errors") or "")
+    return any(hint in msg for hint in _RETRYABLE_HINTS)
+
+
 def _call_claude(
     prompt: str,
     system: str,
     model: str,
     max_budget_usd: float,
     timeout: int = 240,
+    max_attempts: int = 3,
 ) -> dict:
-    """调 `claude -p`，返回 envelope JSON。"""
+    """调 `claude -p`，返回 envelope JSON。临时网络抖动会自动指数退避重试。"""
     args = [
         "claude", "-p",
         "--output-format", "json",
@@ -119,34 +136,56 @@ def _call_claude(
         "--max-budget-usd", str(max_budget_usd),
         "--disallowedTools", *_DISALLOWED_TOOLS,
     ]
-    log.info("调用 claude CLI（model=%s, timeout=%ds）…", model, timeout)
-    try:
-        res = subprocess.run(
-            args,
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+    last_err: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        log.info(
+            "调用 claude CLI（model=%s, timeout=%ds, 第 %d/%d 次）…",
+            model, timeout, attempt, max_attempts,
         )
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(f"claude CLI 超时（{timeout}s）")
-    if res.returncode != 0:
-        raise RuntimeError(
-            f"claude CLI 退出码 {res.returncode}\n"
-            f"STDOUT:\n{res.stdout[:2000]}\n"
-            f"STDERR:\n{res.stderr[:2000]}"
-        )
-    try:
-        envelope = json.loads(res.stdout)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(
-            f"无法解析 claude 输出为 JSON: {e}\n前 500 字节:\n{res.stdout[:500]}"
-        )
-    if envelope.get("is_error"):
-        raise RuntimeError(
-            f"claude 报错: {envelope.get('result')}\n详情: {envelope.get('errors')}"
-        )
-    return envelope
+        try:
+            res = subprocess.run(
+                args, input=prompt, capture_output=True, text=True, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            last_err = RuntimeError(f"claude CLI 超时（{timeout}s）")
+            log.warning("claude CLI 超时，准备重试（%d/%d）", attempt, max_attempts)
+        else:
+            try:
+                envelope = json.loads(res.stdout) if res.stdout else None
+            except json.JSONDecodeError:
+                envelope = None
+
+            # 成功 + 非临时错误 → 直接返回/抛出，不重试
+            if res.returncode == 0 and envelope and not envelope.get("is_error"):
+                return envelope
+            if envelope and envelope.get("is_error") and not _is_retryable_envelope(envelope):
+                raise RuntimeError(
+                    f"claude 报错: {envelope.get('result')}\n详情: {envelope.get('errors')}"
+                )
+
+            # 临时错误：进入重试
+            if envelope and _is_retryable_envelope(envelope):
+                last_err = RuntimeError(f"claude 临时故障: {envelope.get('result')}")
+                log.warning(
+                    "claude API 临时故障，准备重试（%d/%d）: %s",
+                    attempt, max_attempts, envelope.get("result"),
+                )
+            else:
+                last_err = RuntimeError(
+                    f"claude CLI 退出码 {res.returncode}\n"
+                    f"STDOUT:\n{res.stdout[:2000]}\n"
+                    f"STDERR:\n{res.stderr[:2000]}"
+                )
+                # 非 envelope 类的错误也试一次重试
+                log.warning("claude CLI 非预期退出，准备重试（%d/%d）", attempt, max_attempts)
+
+        if attempt < max_attempts:
+            backoff = 2 ** (attempt - 1) * 5  # 5s, 10s, 20s
+            log.info("等待 %ds 后重试…", backoff)
+            time.sleep(backoff)
+
+    assert last_err is not None
+    raise last_err
 
 
 def summarize(
