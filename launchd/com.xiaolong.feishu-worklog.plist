@@ -11,12 +11,13 @@
     <key>RunAtLoad</key>
     <true/>
 
+    <!-- 跑 FeishuWorklog.app 里的启动器（而非直接跑 python）：
+         TCC 按 .app bundle 记权限，"完全磁盘访问"授权一次即永久有效，
+         不受 Homebrew python 版本变化影响。.app 由 launchd/build_app.sh 生成。
+         启动器自己会 chdir 到项目目录并跑 scripts.run_daily --catch-up。 -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/xiaolong/go/src/feishu-worklog/.venv/bin/python</string>
-        <string>-m</string>
-        <string>scripts.run_daily</string>
-        <string>--catch-up</string>
+        <string>/Users/xiaolong/go/src/feishu-worklog/FeishuWorklog.app/Contents/MacOS/FeishuWorklog</string>
     </array>
 
     <key>WorkingDirectory</key>

@@ -15,3 +15,6 @@ data/*.log
 # 配置（含密钥）
 config.yaml
 .env
+
+# 构建产物（由 launchd/build_app.sh 生成）
+FeishuWorklog.app/

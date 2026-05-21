@@ -2,7 +2,7 @@
 # 安装 / 卸载 LaunchAgent，让 feishu-worklog 每天自动跑（含开盖唤醒补跑）
 #
 # 用法：
-#   ./scripts/install_launchd.sh install     # 装好并立即加载
+#   ./scripts/install_launchd.sh install     # 构建 .app + 装好并立即加载
 #   ./scripts/install_launchd.sh uninstall   # 停掉并卸载
 #   ./scripts/install_launchd.sh status      # 看状态
 #   ./scripts/install_launchd.sh reload      # 改完 plist 后重新加载
@@ -19,6 +19,8 @@ cmd="${1:-status}"
 
 case "$cmd" in
   install)
+    # 先构建 FeishuWorklog.app（plist 指向它的启动器）
+    "$PROJECT_DIR/launchd/build_app.sh"
     mkdir -p "$HOME/Library/LaunchAgents"
     cp "$SRC_PLIST" "$DEST_PLIST"
     # 用 launchctl bootstrap（新写法），失败兜底用 load
@@ -29,7 +31,10 @@ case "$cmd" in
       echo "✓ load 成功"
     fi
     echo "已安装：$DEST_PLIST"
-    echo "下次触发：每天 8:00（错过会在系统唤醒后补跑）+ 每次重新登录"
+    echo "触发时机：用户登录 / 开盖唤醒 / 手动 kickstart"
+    echo
+    echo "⚠️  还需一步：系统设置 → 隐私与安全性 → 完全磁盘访问权限，"
+    echo "    把 $PROJECT_DIR/FeishuWorklog.app 加进去并打开开关。"
     ;;
   uninstall)
     if [ -f "$DEST_PLIST" ]; then
@@ -42,6 +47,8 @@ case "$cmd" in
     fi
     ;;
   reload)
+    # build_app.sh 是幂等的：.app 没过期就跳过，不会动 cdhash、不影响已授的 FDA
+    "$PROJECT_DIR/launchd/build_app.sh"
     launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null \
       || launchctl unload "$DEST_PLIST" 2>/dev/null || true
     cp "$SRC_PLIST" "$DEST_PLIST"
