@@ -5,7 +5,18 @@
     <key>Label</key>
     <string>com.xiaolong.feishu-worklog</string>
 
-    <!-- 触发方式：用户登录 / 开盖唤醒 / agent 加载（含 reload）时各跑一次
+    <!-- 每天 10:00 触发；如果电脑当时在睡，唤醒后 launchd 会自动补跑
+         （RunAtLoad 只在 agent 加载/登录那一刻触发，不会在睡眠唤醒时再跑，
+          「唤醒补跑」靠的是 StartCalendarInterval 的错过即补特性）。 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- 用户登录 / agent 加载（含 reload）时也各跑一次。
          配合 --catch-up，已生成的日子会快速退出。手动触发也可：
            launchctl kickstart -k gui/$(id -u)/com.xiaolong.feishu-worklog -->
     <key>RunAtLoad</key>
