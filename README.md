@@ -20,8 +20,9 @@ launchd 10:00（错过自动补跑 / 登录时也跑）
 
 ## 安装
 
-> ⚠️ 前置：系统里已安装 `claude` (Claude Code CLI) 并已登录。
-> 终端跑一次 `claude --version` 能看到版本号即 OK。
+> ⚠️ 前置：系统里已安装 `claude` (Claude Code CLI)，
+> 终端跑 `claude --version` 能看到版本号即 OK。登录与否都行——
+> 下面第 3 步的脚本会走完整的浏览器授权。
 
 ### 1. 装依赖
 
