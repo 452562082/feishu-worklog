@@ -17,8 +17,24 @@ DEST_PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 cmd="${1:-status}"
 
+_check_env_token() {
+  # launchd 是非交互环境，读不了 macOS Keychain。必须先用 .env 里的
+  # CLAUDE_CODE_OAUTH_TOKEN 把 claude CLI 的 auth 走 env 传过去，否则装好
+  # 第一次跑就会撞 403。
+  local env_file="$PROJECT_DIR/.env"
+  if [ ! -f "$env_file" ] \
+     || ! grep -qE '^CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-' "$env_file"; then
+    echo "✗ .env 里没看到有效的 CLAUDE_CODE_OAUTH_TOKEN" >&2
+    echo "  launchd 是非交互环境读不了 keychain，必须先配 OAuth token。" >&2
+    echo "  跑一下：./scripts/setup_oauth_token.sh" >&2
+    echo "  然后再来 install。" >&2
+    exit 1
+  fi
+}
+
 case "$cmd" in
   install)
+    _check_env_token
     # 先构建 FeishuWorklog.app（plist 指向它的启动器）
     "$PROJECT_DIR/launchd/build_app.sh"
     mkdir -p "$HOME/Library/LaunchAgents"
