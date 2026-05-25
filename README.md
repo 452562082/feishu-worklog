@@ -2,7 +2,7 @@
 
 每天定时抓取飞书里你参与并发言的私聊/群聊，用 Claude 按"工作主题"重组成工作日志，写入 Obsidian。
 
-LLM 通过 `claude` CLI 子进程调用，**复用 Claude Code 的 OAuth 登录态，无需单独申请 Anthropic API key**。
+LLM 通过 `claude` CLI 子进程调用，复用你的 Claude Pro/Max 订阅（一次性 `claude setup-token` 拿长期 OAuth token），**无需单独申请 Anthropic API key**。
 
 ## 工作流
 
@@ -66,15 +66,18 @@ python -m scripts.login
 打开一个有头浏览器扫码登录飞书。登录态保存在 `data/browser_state/`，
 后续无须再登。
 
-### 5.（可选）装成自动任务
+### 5. 装成自动任务
 
-见下面 [部署成自动任务](#部署成自动任务-macos--launchd) 一节。
+见下面「部署成自动任务」一节。
 
-## 每日运行
+## 手动跑（调试用）
+
+装完 launchd 后日常不需要手动跑。调试 / 补跑某天用：
 
 ```bash
 python -m scripts.run_daily              # 跑今天
 python -m scripts.run_daily 2026-05-18   # 跑指定日期
+python -m scripts.run_daily 2026-05-18 --skip-crawl   # 跳过抓取，仅重新总结
 ```
 
 ## 长期记忆 / 归档
@@ -113,4 +116,4 @@ python -m scripts.archive_backfill 5        # 最多跑 5 天
 - DOM 变了：`src/feishu_worklog/crawler.py` 里的 selector 列表写了 fallback，加一个新候选即可
 - LLM 输出格式坏：`data/raw/YYYY-MM-DD.json` 留有 prompt 输入，可重跑 `python -m scripts.run_daily --skip-crawl`
 - launchd 跑报 `403 Failed to authenticate`：claude CLI 升级导致 keychain ACL 失效，
-  按上面"配 OAuth token"做一次即可。也可手动测：`tail -F data/launchd.err.log` 看下一次跑
+  跑一次 `./scripts/setup_oauth_token.sh` 即可。实时看下一次跑：`tail -F data/launchd.err.log`
