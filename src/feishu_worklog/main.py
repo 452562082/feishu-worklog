@@ -5,12 +5,14 @@ import asyncio
 import logging
 import sys
 import time
+import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from .archiver import archive_due
 from .config import Config, load_config
 from .crawler import crawl, open_login
+from .notify import notify_failure
 from .obsidian import write_daily
 from .storage import Storage
 from .summarizer import summarize
@@ -99,6 +101,10 @@ def run(
         out = write_daily(cfg.obsidian_path, target, markdown)
         log.info("完成：%s", out)
         ok = True
+    except Exception:
+        # launchd 跑挂了用户看不到 stderr，发条通知出去
+        notify_failure(traceback.format_exc(), target_date=target)
+        raise
     finally:
         if not done:
             storage.finish_run(target, msg_count, ok)

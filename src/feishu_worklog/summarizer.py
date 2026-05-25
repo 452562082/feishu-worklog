@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import time
 from datetime import datetime
@@ -16,6 +17,42 @@ from .config import Config
 from .topics import TopicDict
 
 log = logging.getLogger(__name__)
+
+
+# claude CLI 认可的几条 auth 路径，命中任何一条都能跑（按优先级排）：
+#   1. CLAUDE_CODE_OAUTH_TOKEN —— `claude setup-token` 给的长期 OAuth token
+#   2. CLAUDE_CODE_SESSION_ACCESS_TOKEN —— 父进程是 Claude Code 时自动注入
+#   3. ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN —— 走 API key 模式
+# 都没有 → 退化到 macOS Keychain，launchd 非交互模式下 ACL 拿不到 → 403
+_AUTH_ENV_VARS = (
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_SESSION_ACCESS_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+)
+
+_AUTH_HINT = (
+    "claude CLI 报认证失败。如果是 launchd / cron 跑的（非交互环境读不了 keychain），"
+    "请按 README 配 .env 里的 CLAUDE_CODE_OAUTH_TOKEN：\n"
+    "  cp .env.example .env && chmod 600 .env\n"
+    "  claude setup-token   # 把得到的 token 粘到 .env\n"
+)
+
+
+def _auth_source_in_env() -> str | None:
+    """返回当前 env 里能用的 auth 变量名，没有返回 None。"""
+    for name in _AUTH_ENV_VARS:
+        if os.environ.get(name):
+            return name
+    return None
+
+
+def _looks_like_auth_error(envelope: dict | None) -> bool:
+    if not envelope:
+        return False
+    msg = (envelope.get("result") or "") + " " + str(envelope.get("errors") or "")
+    msg = msg.lower()
+    return any(s in msg for s in ("authenticate", "401", "403 request not allowed"))
 
 
 SYSTEM_PROMPT = """你是用户的私人工作日志助理。用户会把自己一天里在飞书上的聊天记录给你，
@@ -127,6 +164,15 @@ def _call_claude(
     max_attempts: int = 3,
 ) -> dict:
     """调 `claude -p`，返回 envelope JSON。临时网络抖动会自动指数退避重试。"""
+    auth_src = _auth_source_in_env()
+    if auth_src:
+        log.info("claude auth 来源：env $%s", auth_src)
+    else:
+        log.warning(
+            "env 里没有 CLAUDE_CODE_OAUTH_TOKEN 等 auth 变量；"
+            "claude 会退化到 macOS Keychain，launchd 非交互环境可能拿不到 token"
+        )
+
     args = [
         "claude", "-p",
         "--output-format", "json",
@@ -159,8 +205,9 @@ def _call_claude(
             if res.returncode == 0 and envelope and not envelope.get("is_error"):
                 return envelope
             if envelope and envelope.get("is_error") and not _is_retryable_envelope(envelope):
+                hint = "\n\n" + _AUTH_HINT if _looks_like_auth_error(envelope) else ""
                 raise RuntimeError(
-                    f"claude 报错: {envelope.get('result')}\n详情: {envelope.get('errors')}"
+                    f"claude 报错: {envelope.get('result')}\n详情: {envelope.get('errors')}{hint}"
                 )
 
             # 临时错误：进入重试

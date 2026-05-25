@@ -33,6 +33,19 @@ cp config.example.yaml config.yaml
 > ⚠️ 依赖系统里已安装 `claude` (Claude Code CLI) 并已登录。
 > 在终端跑一次 `claude --version` 能看到版本号即 OK。
 
+### 配 OAuth token（launchd 自动跑必需）
+
+```bash
+cp .env.example .env && chmod 600 .env
+claude setup-token            # 浏览器登录后会给一串 sk-ant-oat01-... 的 token
+# 把 token 粘到 .env 里 CLAUDE_CODE_OAUTH_TOKEN=
+```
+
+为什么这步不能省：`claude` CLI 每天自动升级一次，每个新版本一个新代码签名，
+macOS Keychain ACL 不认 → 交互终端会弹「始终允许」框、点一下就更新 ACL；
+但 launchd 非交互模式弹不出框 → keychain 拒访问 → 403。
+长期 token 走 env 传给 claude 子进程，完全绕开 keychain。
+
 ## 首次登录
 
 ```bash
@@ -83,3 +96,5 @@ python -m scripts.archive_backfill 5        # 最多跑 5 天
 - 抓不到消息：去 `data/screenshots/` 看抓取过程的截图
 - DOM 变了：`src/feishu_worklog/crawler.py` 里的 selector 列表写了 fallback，加一个新候选即可
 - LLM 输出格式坏：`data/raw/YYYY-MM-DD.json` 留有 prompt 输入，可重跑 `python -m scripts.run_daily --skip-crawl`
+- launchd 跑报 `403 Failed to authenticate`：claude CLI 升级导致 keychain ACL 失效，
+  按上面"配 OAuth token"做一次即可。也可手动测：`tail -F data/launchd.err.log` 看下一次跑

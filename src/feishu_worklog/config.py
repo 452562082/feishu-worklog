@@ -1,10 +1,36 @@
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+
+
+def _load_dotenv(env_file: Path) -> None:
+    """把同目录 .env 里的 KEY=VALUE 注入 os.environ（已存在的不覆盖）。
+
+    专为 CLAUDE_CODE_OAUTH_TOKEN 准备：claude CLI 每天会自动升级，新二进制的
+    code identity 不在 macOS Keychain ACL 里，交互模式会弹「始终允许」框、
+    launchd 非交互模式没法弹 → keychain 拒访问 → claude 拿不到 token → 403。
+    用长期 token 透传 env，完全绕过 keychain。
+    """
+    if not env_file.exists():
+        return
+    for raw in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
+            value = value[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 @dataclass
@@ -62,6 +88,11 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         raise FileNotFoundError(
             f"{p} 不存在，先 cp config.example.yaml config.yaml 并填好"
         )
+
+    # 加载同目录 .env（CLAUDE_CODE_OAUTH_TOKEN 等），让 claude CLI 子进程
+    # 不再依赖 macOS Keychain，避开 claude 升级后 keychain ACL 失效的坑。
+    _load_dotenv(p.with_name(".env"))
+
     raw = yaml.safe_load(p.read_text(encoding="utf-8"))
 
     if not shutil.which("claude"):
