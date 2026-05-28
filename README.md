@@ -2,7 +2,7 @@
 
 每天定时抓取飞书里你参与并发言的私聊/群聊，用 Claude 按"工作主题"重组成工作日志，写入 Obsidian。
 
-LLM 通过 `claude` CLI 子进程调用，复用你的 Claude Pro/Max 订阅（一次性 `claude setup-token` 拿长期 OAuth token），**无需单独申请 Anthropic API key**。
+LLM 通过 `claude` CLI 子进程调用，复用你的 Claude Pro/Max 订阅（终端跑 `claude auth login` 走 claude.ai 浏览器登录即可），**无需单独申请 Anthropic API key**。
 
 ## 工作流
 
@@ -40,22 +40,19 @@ cp config.example.yaml config.yaml
 # 编辑 config.yaml，至少填 my_name 和 obsidian_path
 ```
 
-### 3. 配 OAuth token（launchd 自动跑必需）
+### 3. 登录 claude
 
 ```bash
-./scripts/setup_oauth_token.sh
+claude auth login    # 走 claude.ai 浏览器授权一次即可
 ```
 
-脚本会跑 `claude setup-token`（浏览器授权 → 复制 code 粘回终端），
-再用 `script(1)` 录输出、grep `sk-ant-oat01-...` 自动写入 `.env`。
+登录态会写到 macOS Keychain。launchd 跑时通过 plist 里设的
+`PATH/HOME/USER/LOGNAME` 让非交互上下文也能定位并读取这条凭据
+——四个变量必须齐，少一个 claude 就报 `403 Failed to authenticate`
+（详见 `launchd/com.xiaolong.feishu-worklog.plist` 顶部注释）。
 
-为什么这步不能省：`claude` CLI 每天会自动升级一版，每个新版本一个新代码签名，
-macOS Keychain ACL 不认 → 交互终端会弹「始终允许」框、点一下就更新 ACL；
-但 launchd 非交互模式弹不出框 → keychain 拒访问 → 403。
-长期 token 走 env 传给 claude 子进程，完全绕开 keychain。
-
-`.env` 已 `.gitignore`，权限 600。也可顺手把可选的 `FEISHU_WEBHOOK_URL`
-填上（跑挂时发飞书消息提醒，没配走 macOS 桌面通知兜底）。
+可选：`cp .env.example .env && chmod 600 .env`，把 `FEISHU_WEBHOOK_URL`
+填上，launchd 跑挂时会推消息到飞书群；不配走 macOS 桌面通知兜底。
 
 ### 4. 飞书扫码登录
 
@@ -80,20 +77,11 @@ python -m scripts.run_daily 2026-05-18   # 跑指定日期
 python -m scripts.run_daily 2026-05-18 --skip-crawl   # 跳过抓取，仅重新总结
 ```
 
-## 长期记忆 / 归档
+## 工作日记保留期
 
-工作日记保留 `retention_days` 天（默认 14）；超期的会自动：
-- 浓缩成每主题一条时间线条目，追加到 `工作日记/长期记忆/{主题名}.md`
-- 原日记移到 `工作日记/归档/YYYY-MM-DD.md` 留底
-
-归档由 `run_daily` 顺手执行（每次最多 1 天，多天积压会渐进处理）。
-也可一次性补：
-
-```bash
-python -m scripts.archive_backfill --dry    # 先看会处理哪些
-python -m scripts.archive_backfill          # 实际跑
-python -m scripts.archive_backfill 5        # 最多跑 5 天
-```
+工作日记只留最近 `retention_days` 天（默认 30）；超期的 `YYYY-MM-DD.md` 由 `run_daily`
+顺手直接删除（按文件名日期判断，不浓缩、不留底）。只动 vault 根目录下严格命名的日记，
+其它笔记不碰。
 
 ## 部署成自动任务（macOS / launchd）
 
@@ -115,5 +103,8 @@ python -m scripts.archive_backfill 5        # 最多跑 5 天
 - 抓不到消息：去 `data/screenshots/` 看抓取过程的截图
 - DOM 变了：`src/feishu_worklog/crawler.py` 里的 selector 列表写了 fallback，加一个新候选即可
 - LLM 输出格式坏：`data/raw/YYYY-MM-DD.json` 留有 prompt 输入，可重跑 `python -m scripts.run_daily --skip-crawl`
-- launchd 跑报 `403 Failed to authenticate`：claude CLI 升级导致 keychain ACL 失效，
-  跑一次 `./scripts/setup_oauth_token.sh` 即可。实时看下一次跑：`tail -F data/launchd.err.log`
+- launchd 跑报 `403 Failed to authenticate`：先在终端跑 `claude auth status` 看是否
+  `loggedIn: true`；不是就重新 `claude auth login`。已登录还报 403 的话，检查
+  `~/Library/LaunchAgents/com.xiaolong.feishu-worklog.plist` 的 `EnvironmentVariables`
+  里是否齐了 `PATH/HOME/USER/LOGNAME` 四个 key——缺 `USER/LOGNAME` 就会让非交互的
+  launchd 定位不到 keychain 条目。实时看下一次跑：`tail -F data/launchd.err.log`

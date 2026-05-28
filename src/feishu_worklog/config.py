@@ -11,10 +11,7 @@ import yaml
 def _load_dotenv(env_file: Path) -> None:
     """把同目录 .env 里的 KEY=VALUE 注入 os.environ（已存在的不覆盖）。
 
-    专为 CLAUDE_CODE_OAUTH_TOKEN 准备：claude CLI 每天会自动升级，新二进制的
-    code identity 不在 macOS Keychain ACL 里，交互模式会弹「始终允许」框、
-    launchd 非交互模式没法弹 → keychain 拒访问 → claude 拿不到 token → 403。
-    用长期 token 透传 env，完全绕过 keychain。
+    目前只用来读 FEISHU_WEBHOOK_URL；claude CLI 的认证走 keychain，不在 .env 里。
     """
     if not env_file.exists():
         return
@@ -73,14 +70,6 @@ class Config:
     def raw_dir(self) -> Path:
         return self.data_dir / "raw"
 
-    @property
-    def archive_dir(self) -> Path:
-        return self.obsidian_path / "归档"
-
-    @property
-    def long_term_dir(self) -> Path:
-        return self.obsidian_path / "长期记忆"
-
 
 def load_config(path: str | Path = "config.yaml") -> Config:
     p = Path(path)
@@ -89,8 +78,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
             f"{p} 不存在，先 cp config.example.yaml config.yaml 并填好"
         )
 
-    # 加载同目录 .env（CLAUDE_CODE_OAUTH_TOKEN 等），让 claude CLI 子进程
-    # 不再依赖 macOS Keychain，避开 claude 升级后 keychain ACL 失效的坑。
+    # 加载同目录 .env（目前只有 FEISHU_WEBHOOK_URL；webhook 模块走 os.environ 读取）。
     _load_dotenv(p.with_name(".env"))
 
     raw = yaml.safe_load(p.read_text(encoding="utf-8"))
@@ -117,7 +105,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         scroll_pause_ms=int(raw.get("scroll_pause_ms", 600)),
         headless=bool(raw.get("headless", False)),
         slow_mo_ms=int(raw.get("slow_mo_ms", 0)),
-        retention_days=int(raw.get("retention_days", 14)),
+        retention_days=int(raw.get("retention_days", 30)),
         llm_timeout_seconds=int(raw.get("llm_timeout_seconds", 240)),
         raw_retention_days=int(raw.get("raw_retention_days", 30)),
         screenshot_retention_days=int(raw.get("screenshot_retention_days", 14)),

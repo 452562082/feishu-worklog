@@ -17,24 +17,25 @@ DEST_PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 cmd="${1:-status}"
 
-_check_env_token() {
-  # launchd 是非交互环境，读不了 macOS Keychain。必须先用 .env 里的
-  # CLAUDE_CODE_OAUTH_TOKEN 把 claude CLI 的 auth 走 env 传过去，否则装好
-  # 第一次跑就会撞 403。
-  local env_file="$PROJECT_DIR/.env"
-  if [ ! -f "$env_file" ] \
-     || ! grep -qE '^CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-' "$env_file"; then
-    echo "✗ .env 里没看到有效的 CLAUDE_CODE_OAUTH_TOKEN" >&2
-    echo "  launchd 是非交互环境读不了 keychain，必须先配 OAuth token。" >&2
-    echo "  跑一下：./scripts/setup_oauth_token.sh" >&2
-    echo "  然后再来 install。" >&2
+_check_claude_logged_in() {
+  # launchd 跑 claude CLI 时复用 keychain 里 claude.ai 的会话凭据
+  # （plist 的 USER/LOGNAME/HOME 让 launchd 非交互上下文也能定位到）。
+  # 装之前先确认终端里 claude 是登录态的，否则装好第一次跑就 403。
+  if ! command -v claude >/dev/null 2>&1; then
+    echo "✗ 找不到 claude 命令，先装 Claude Code CLI" >&2
+    exit 1
+  fi
+  if ! claude auth status 2>/dev/null | grep -q '"loggedIn": true'; then
+    echo "✗ claude CLI 当前未登录" >&2
+    echo "  跑一下：claude auth login   # 浏览器走 claude.ai" >&2
+    echo "  登完再来 install。" >&2
     exit 1
   fi
 }
 
 case "$cmd" in
   install)
-    _check_env_token
+    _check_claude_logged_in
     # 先构建 FeishuWorklog.app（plist 指向它的启动器）
     "$PROJECT_DIR/launchd/build_app.sh"
     mkdir -p "$HOME/Library/LaunchAgents"

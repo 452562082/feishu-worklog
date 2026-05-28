@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import sys
 import time
 import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .archiver import archive_due
 from .config import Config, load_config
 from .crawler import crawl, open_login
 from .notify import notify_failure
@@ -109,17 +109,47 @@ def run(
         if not done:
             storage.finish_run(target, msg_count, ok)
 
-    # 顺手归档一天（limit=1，避免单次跑太久；多天积压会自然在多次跑中处理掉）
+    # 删除过期工作日记（> retention_days 天，按文件名日期判断，直接删不留底）
     try:
-        archive_due(cfg, limit=1)
+        _delete_expired_diaries(cfg)
     except Exception as e:
-        log.warning("归档过程出错（不影响今日产出）: %s", e)
+        log.warning("日记清理出错（不影响今日产出）: %s", e)
 
     # 清理过期敏感数据（raw prompt/response、截图、原始消息）
     try:
         _cleanup_retention(cfg, storage)
     except Exception as e:
         log.warning("retention 清理出错（不影响今日产出）: %s", e)
+
+
+def _delete_expired_diaries(cfg: Config) -> None:
+    """删除 obsidian 库里超过 retention_days 天的 YYYY-MM-DD.md 日记。
+
+    按文件名里的日期判断，不用 mtime——Obsidian 同步 / 重新编辑会改 mtime，
+    文件名日期才是这条日记真正归属的那天。只动根目录下严格匹配命名的日记，
+    其它笔记（含旧的 长期记忆/ 归档/ 子目录）不碰。
+    """
+    log = logging.getLogger("main")
+    if not cfg.obsidian_path.exists() or cfg.retention_days <= 0:
+        return
+    cutoff = datetime.now().date() - timedelta(days=cfg.retention_days)
+    n = 0
+    for fp in cfg.obsidian_path.glob("*.md"):
+        m = re.match(r"^(\d{4})-(\d{2})-(\d{2})\.md$", fp.name)
+        if not m:
+            continue
+        try:
+            d = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+        except ValueError:
+            continue
+        if d < cutoff:
+            try:
+                fp.unlink()
+                n += 1
+            except OSError as e:
+                log.debug("删除 %s 失败：%s", fp, e)
+    if n > 0:
+        log.info("[retention] 工作日记删除 %d 个 > %d 天的日记", n, cfg.retention_days)
 
 
 def _cleanup_retention(cfg: Config, storage: Storage) -> None:

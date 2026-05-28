@@ -22,7 +22,7 @@ model: "claude-haiku-4-5"
 # 单次调用的成本上限（美元）；超过 claude CLI 会拒绝继续，防意外
 max_budget_usd: 1.0
 
-# 单次 claude CLI 调用的超时（秒）。归档场景输入更长，可适当调大
+# 单次 claude CLI 调用的超时（秒）。消息多的当天总结输入更长，可适当调大
 llm_timeout_seconds: 240
 
 # === 飞书抓取参数 ===
@@ -36,11 +36,10 @@ scroll_pause_ms: 600              # 每次滚动后等待时间
 headless: false                   # 首次登录建议 false；稳定后可 true
 slow_mo_ms: 0                     # 调试时可以加 200~500
 
-# === 归档 / 长期记忆 ===
-# 超过 retention_days 天的日记：
-#   - 原文件移到 工作日记/归档/
-#   - 内容按主题浓缩追加到 工作日记/长期记忆/{主题名}.md
-retention_days: 14
+# === 工作日记保留期 ===
+# 工作日记只留最近 retention_days 天，超期的 YYYY-MM-DD.md 直接删除
+# （按文件名日期判断；不浓缩、不留底，只动根目录下的日记，其它笔记不碰）
+retention_days: 30
 
 # === 敏感数据保留期 ===
 # 这些目录里的文件含飞书原文 / 私聊上下文 / 截图，本地未加密，按周期自动清理

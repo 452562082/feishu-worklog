@@ -34,13 +34,22 @@
     <key>WorkingDirectory</key>
     <string>/Users/xiaolong/go/src/feishu-worklog</string>
 
+    <!-- claude CLI 用 claude.ai 登录态（keychain 存的）跑 API，需要这四样：
+         PATH    找到 claude 二进制
+         HOME    定位 ~/.claude 配置目录
+         USER    keychain 查询时定位 user-scoped item（缺这个 → loggedIn:false → 403）
+         LOGNAME 同上，部分 macOS 调用走这个变量
+         一定都要齐，少一个 claude 就报 "Failed to authenticate. API Error: 403"。 -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
         <string>/Users/xiaolong/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-        <!-- 用户登录态相关：让 claude CLI 能读 keychain -->
         <key>HOME</key>
         <string>/Users/xiaolong</string>
+        <key>USER</key>
+        <string>xiaolong</string>
+        <key>LOGNAME</key>
+        <string>xiaolong</string>
     </dict>
 
     <!-- 日志（运行输出/错误） -->
